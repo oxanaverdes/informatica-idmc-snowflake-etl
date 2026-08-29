@@ -6,6 +6,8 @@ This sample dataset is designed to demonstrate incremental loading, transformati
 
 **LAST_RUN_TIMESTAMP = 2026-08-15 00:00:00**
 
+WHERE LAST_UPDATED > :LAST_RUN_TIMESTAMP
+
 | Customer | LAST_UPDATED | ETL Result |
 |---|---|---|
 | 1001 John | Aug 10 | ❌ Filtered out |
@@ -22,3 +24,17 @@ LAST_RUN_TIMESTAMP = Aug 15
 1002 Maria    Aug 18  → EXTRACTED → VALID
 1003 David    Aug 20  → EXTRACTED → VALID
 NULL Robert   Aug 21  → EXTRACTED → REJECT
+
+SOURCE FILE        4 records
+                       |
+              Incremental Filter
+                       |
+              +--------+--------+
+              |                 |
+         Filtered Out       Extracted
+              1                 3
+                                |
+                         +------+------+
+                         |             |
+                       VALID         REJECT
+                         2              1
