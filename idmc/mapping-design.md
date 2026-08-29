@@ -22,6 +22,9 @@ Router
 ↓  
 Snowflake STG_CUSTOMER
 
+<img width="1536" height="1024" alt="image" src="https://github.com/user-attachments/assets/d1ff8d12-7267-475e-8449-af9404b4c9fa" />
+
+
 ## Source
 
 **System:** Oracle  
