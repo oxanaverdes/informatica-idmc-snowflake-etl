@@ -1,6 +1,5 @@
 customer_id,first_name,last_name,email,state,status,created_date,last_updated
-1001,John,Smith,john.smith@example.com,IL,ACTIVE,2025-01-15,2026-08-10
-1002,Maria,Garcia,maria.garcia@example.com,IN,ACTIVE,2025-03-22,2026-08-12
-1003,David,Brown,david.brown@example.com,OH,INACTIVE,2025-06-10,2026-07-30
-1004,Lisa,Johnson,lisa.johnson@example.com,IL,ACTIVE,2026-01-05,2026-08-15
-1005,Robert,Davis,robert.davis@example.com,IN,ACTIVE,2026-02-18,2026-08-18
+1001,John,Smith,john.smith@example.com,il,active,2025-01-15,2026-08-10
+1002," Maria ",Garcia,maria.garcia@example.com,in,active,2025-03-22,2026-08-18
+1003,David,Brown,david.brown@example.com,oh,inactive,2025-06-10,2026-08-20
+,Robert,Davis,robert.davis@example.com,in,active,2026-02-18,2026-08-21
