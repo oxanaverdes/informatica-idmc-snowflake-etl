@@ -3,9 +3,9 @@
 -- ============================================================
 --
 -- Purpose:
---   Validate that every customer record extracted during an
---   ETL run is accounted for as either successfully loaded
---   or rejected.
+--   Validate that every customer record extracted during one
+--   specific ETL run is accounted for as either successfully
+--   loaded or rejected.
 --
 --
 -- ============================================================
@@ -56,12 +56,15 @@
 --                  v             v
 --          STG_CUSTOMER    STG_CUSTOMER_REJ
 --
+-- Both targets store the same RUN_ID so the records can be
+-- reconciled for one specific ETL execution.
+--
 --
 -- ============================================================
 -- RECONCILIATION RULE
 -- ============================================================
 --
--- Every source record must be accounted for:
+-- Every extracted record must be accounted for:
 --
 --   SOURCE = LOADED + REJECTED
 --
@@ -90,94 +93,154 @@
 --
 --
 -- ============================================================
--- PRODUCTION NOTE
+-- RUN IDENTIFIER
 -- ============================================================
 --
--- RUN_ID = 20260829_020000 is used here as a sample ETL run.
+-- Sample RUN_ID:
 --
--- In a production implementation, each ETL execution should
--- have its own RUN_ID. The RUN_ID can be stored with staging,
--- rejected, and audit records so that reconciliation is
--- performed for one specific ETL execution rather than
--- against all historical records in the tables.
+--   20260829_020000
 --
--- Example production audit result:
+-- STG_CUSTOMER and STG_CUSTOMER_REJ both contain RUN_ID.
+--
+-- This allows reconciliation to count only records belonging
+-- to the current ETL run instead of counting historical data
+-- from previous executions.
+--
+-- ============================================================
+
+
+-- ============================================================
+-- 1. COUNT SUCCESSFULLY LOADED RECORDS FOR THIS RUN
+-- ============================================================
+--
+-- Expected sample result:
+--
+-- RUN_ID             LOADED_RECORDS
+-- -----------------  --------------
+-- 20260829_020000          2
+--
+
+SELECT
+    RUN_ID,
+    COUNT(*) AS LOADED_RECORDS
+FROM STG_CUSTOMER
+WHERE RUN_ID = '20260829_020000'
+GROUP BY RUN_ID;
+
+
+-- ============================================================
+-- 2. COUNT REJECTED RECORDS FOR THIS RUN
+-- ============================================================
+--
+-- Expected sample result:
+--
+-- RUN_ID             REJECTED_RECORDS
+-- -----------------  ----------------
+-- 20260829_020000           1
+--
+
+SELECT
+    RUN_ID,
+    COUNT(*) AS REJECTED_RECORDS
+FROM STG_CUSTOMER_REJ
+WHERE RUN_ID = '20260829_020000'
+GROUP BY RUN_ID;
+
+
+-- ============================================================
+-- 3. PROCESSING SUMMARY FOR THIS RUN
+-- ============================================================
+--
+-- Expected sample result:
+--
+-- RUN_ID             LOADED   REJECTED   TOTAL_PROCESSED
+-- -----------------  ------   --------   ---------------
+-- 20260829_020000       2         1             3
+--
+
+SELECT
+    '20260829_020000' AS RUN_ID,
+
+    (SELECT COUNT(*)
+       FROM STG_CUSTOMER
+      WHERE RUN_ID = '20260829_020000') AS LOADED_RECORDS,
+
+    (SELECT COUNT(*)
+       FROM STG_CUSTOMER_REJ
+      WHERE RUN_ID = '20260829_020000') AS REJECTED_RECORDS,
+
+    (SELECT COUNT(*)
+       FROM STG_CUSTOMER
+      WHERE RUN_ID = '20260829_020000')
+    +
+    (SELECT COUNT(*)
+       FROM STG_CUSTOMER_REJ
+      WHERE RUN_ID = '20260829_020000') AS TOTAL_PROCESSED;
+
+
+-- ============================================================
+-- 4. RECONCILIATION RESULT
+-- ============================================================
+--
+-- SOURCE_RECORDS is set to 3 for this documented sample run.
+--
+-- In a full production implementation, SOURCE_RECORDS would
+-- normally come from an ETL audit/control table populated by
+-- the source extraction step.
+--
+-- Expected result:
 --
 -- RUN_ID             SOURCE   LOADED   REJECTED   DIFFERENCE   STATUS
 -- -----------------  ------   ------   --------   ----------   ------
 -- 20260829_020000       3        2         1           0        PASS
 --
--- ============================================================
 
+WITH RUN_COUNTS AS (
+    SELECT
+        '20260829_020000' AS RUN_ID,
+        3 AS SOURCE_RECORDS,
 
--- ============================================================
--- 1. COUNT SUCCESSFULLY LOADED RECORDS
--- ============================================================
---
--- Expected sample result:
---
--- LOADED_RECORDS
--- --------------
---       2
---
+        (SELECT COUNT(*)
+           FROM STG_CUSTOMER
+          WHERE RUN_ID = '20260829_020000') AS LOADED_RECORDS,
 
-SELECT
-    COUNT(*) AS LOADED_RECORDS
-FROM STG_CUSTOMER;
-
-
--- ============================================================
--- 2. COUNT REJECTED RECORDS
--- ============================================================
---
--- Expected sample result:
---
--- REJECTED_RECORDS
--- ----------------
---        1
---
+        (SELECT COUNT(*)
+           FROM STG_CUSTOMER_REJ
+          WHERE RUN_ID = '20260829_020000') AS REJECTED_RECORDS
+)
 
 SELECT
-    COUNT(*) AS REJECTED_RECORDS
-FROM STG_CUSTOMER_REJ;
+    RUN_ID,
+    SOURCE_RECORDS,
+    LOADED_RECORDS,
+    REJECTED_RECORDS,
 
+    SOURCE_RECORDS
+      - (LOADED_RECORDS + REJECTED_RECORDS)
+        AS DIFFERENCE,
 
--- ============================================================
--- 3. PROCESSING SUMMARY
--- ============================================================
---
--- Expected sample result:
---
--- LOADED_RECORDS   REJECTED_RECORDS   TOTAL_PROCESSED
--- --------------   ----------------   ---------------
---       2                  1                 3
---
+    CASE
+        WHEN SOURCE_RECORDS
+             - (LOADED_RECORDS + REJECTED_RECORDS) = 0
+        THEN 'PASS'
+        ELSE 'FAIL'
+    END AS STATUS
 
-SELECT
-    (SELECT COUNT(*)
-       FROM STG_CUSTOMER) AS LOADED_RECORDS,
-
-    (SELECT COUNT(*)
-       FROM STG_CUSTOMER_REJ) AS REJECTED_RECORDS,
-
-    (SELECT COUNT(*)
-       FROM STG_CUSTOMER)
-    +
-    (SELECT COUNT(*)
-       FROM STG_CUSTOMER_REJ) AS TOTAL_PROCESSED;
+FROM RUN_COUNTS;
 
 
 -- ============================================================
 -- EXPECTED RECONCILIATION
 -- ============================================================
 --
--- SOURCE RECORDS        = 3
--- LOADED RECORDS        = 2
--- REJECTED RECORDS      = 1
+-- RUN_ID                 = 20260829_020000
+-- SOURCE RECORDS         = 3
+-- LOADED RECORDS         = 2
+-- REJECTED RECORDS       = 1
 --
 -- 2 + 1 = 3
 --
--- DIFFERENCE            = 0
--- RECONCILIATION STATUS = PASS
+-- DIFFERENCE             = 0
+-- RECONCILIATION STATUS  = PASS
 --
 -- ============================================================
