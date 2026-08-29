@@ -10,6 +10,8 @@ The taskflow controls the complete customer ETL process from Oracle to Snowflake
 
 It runs the IDMC mapping, checks the result, processes the customer dimension, performs reconciliation, and updates the incremental timestamp only after a successful run.
 
+<img width="1024" height="1536" alt="image" src="https://github.com/user-attachments/assets/2716f996-7d22-417a-a05a-1cf9cd99dc1e" />
+
 ---
 
 ## Sample ETL Run
