@@ -68,11 +68,7 @@ LAST_RUN_TIMESTAMP = 2026-08-15 00:00:00
 
 The source system is Oracle.
 
-**Source table:**
-
-```text
-CUSTOMER
-```
+**Source table:** `CUSTOMER`
 
 The sample source contains four customer records:
 
@@ -154,16 +150,14 @@ The Source transformation passes the extracted Oracle fields into the downstream
 
 Example fields include:
 
-```text
-CUSTOMER_ID
-FIRST_NAME
-LAST_NAME
-EMAIL
-STATE
-STATUS
-CREATED_DATE
-LAST_UPDATED
-```
+- `CUSTOMER_ID`
+- `FIRST_NAME`
+- `LAST_NAME`
+- `EMAIL`
+- `STATE`
+- `STATUS`
+- `CREATED_DATE`
+- `LAST_UPDATED`
 
 ---
 
@@ -248,9 +242,8 @@ REJECT_REASON = 'Missing CUSTOMER_ID'
 At this stage:
 
 ```text
-Records evaluated = 3
-
-Valid candidates  = 2
+Records evaluated  = 3
+Valid candidates   = 2
 Invalid candidates = 1
 ```
 
@@ -275,11 +268,7 @@ Records routed to `VALID_RECORDS`:
 | 1002 | Maria | IN | ACTIVE |
 | 1003 | David | OH | INACTIVE |
 
-These records continue to:
-
-```text
-STG_CUSTOMER
-```
+These records continue to `STG_CUSTOMER`.
 
 ### REJECT_RECORDS
 
@@ -295,11 +284,7 @@ Record routed to `REJECT_RECORDS`:
 |---:|---|---|---|---|
 | NULL | Robert | IN | ACTIVE | Missing CUSTOMER_ID |
 
-This record continues to:
-
-```text
-STG_CUSTOMER_REJ
-```
+This record continues to `STG_CUSTOMER_REJ`.
 
 The Router result is:
 
@@ -329,11 +314,7 @@ Therefore:
 
 **Target system:** Snowflake
 
-**Target table:**
-
-```text
-STG_CUSTOMER
-```
+**Target table:** `STG_CUSTOMER`
 
 The staging table contains records that successfully passed validation.
 
@@ -354,11 +335,7 @@ The staging data is later used for dimensional processing, including SCD Type 2 
 
 Rejected records are preserved instead of being silently discarded.
 
-**Reject table:**
-
-```text
-STG_CUSTOMER_REJ
-```
+**Reject table:** `STG_CUSTOMER_REJ`
 
 Expected rejected record:
 
@@ -419,7 +396,7 @@ LAST_UPDATED = 2026-08-21
 → EXTRACTED → REJECT
 ```
 
-The complete count flow is therefore:
+The complete count flow is:
 
 ```text
 SOURCE FILE
@@ -451,12 +428,10 @@ CUSTOMER
 This is why:
 
 ```text
-Source file records = 4
-
-Incrementally extracted = 3
-
-Loaded   = 2
-Rejected = 1
+Source file records       = 4
+Incrementally extracted   = 3
+Loaded                    = 2
+Rejected                  = 1
 ```
 
 The source-to-target reconciliation is based on the **three records extracted for the ETL run**, not all four records present in the source table.
@@ -502,7 +477,7 @@ FROM STG_CUSTOMER
 WHERE RUN_ID = '20260829_020000';
 ```
 
-and:
+And:
 
 ```sql
 SELECT *
@@ -633,103 +608,46 @@ The mapping demonstrates the following ETL responsibilities:
 
 ## 14. Related Repository Files
 
+The files below contain the SQL, sample data, validation logic, and orchestration design used by this project.
+
 ### Oracle
 
-Source table definition:
-
-```text
-oracle/create_customer.sql
-```
-
-Incremental extraction:
-
-```text
-oracle/incremental_extract.sql
-```
+- [Source Table Definition — create_customer.sql](../oracle/create_customer.sql)
+- [Incremental Extraction — incremental_extract.sql](../oracle/incremental_extract.sql)
 
 ### Snowflake
 
-Valid staging table:
-
-```text
-snowflake/create_stage_tables.sql
-```
-
-Reject table:
-
-```text
-snowflake/create_reject_table.sql
-```
-
-Customer dimension:
-
-```text
-snowflake/create_dimension.sql
-```
-
-SCD Type 2 processing:
-
-```text
-snowflake/merge_customer.sql
-```
-
-ETL run-control table:
-
-```text
-snowflake/create_etl_run_control.sql
-```
-
-ETL run-control processing:
-
-```text
-snowflake/update_etl_run_control.sql
-```
+- [Customer Staging Table — create_stage_tables.sql](../snowflake/create_stage_tables.sql)
+- [Customer Reject Table — create_reject_table.sql](../snowflake/create_reject_table.sql)
+- [Customer Dimension — create_dimension.sql](../snowflake/create_dimension.sql)
+- [SCD Type 2 Processing — merge_customer.sql](../snowflake/merge_customer.sql)
+- [ETL Run Control Table — create_etl_run_control.sql](../snowflake/create_etl_run_control.sql)
+- [ETL Run Control Processing — update_etl_run_control.sql](../snowflake/update_etl_run_control.sql)
 
 ### Validation
 
-Data-quality checks:
-
-```text
-validation/data_quality_checks.sql
-```
-
-Reconciliation:
-
-```text
-validation/reconciliation.sql
-```
+- [Data Quality Checks — data_quality_checks.sql](../validation/data_quality_checks.sql)
+- [ETL Reconciliation — reconciliation.sql](../validation/reconciliation.sql)
 
 ### Sample Data
 
-Oracle source data:
-
-```text
-sample-data/source/customer.csv
-```
-
-Expected valid output:
-
-```text
-sample-data/expected/stg_customer.csv
-```
-
-Expected reject output:
-
-```text
-sample-data/expected/stg_customer_rej.csv
-```
+- [Sample Data Documentation](../sample-data/README.md)
+- [Oracle Source Data — customer.csv](../sample-data/source/customer.csv)
+- [Expected Valid Output — stg_customer.csv](../sample-data/expected/stg_customer.csv)
+- [Expected Reject Output — stg_customer_rej.csv](../sample-data/expected/stg_customer_rej.csv)
 
 ### IDMC
 
-Taskflow design:
+- [IDMC Taskflow Design](taskflow-design.md)
 
-```text
-idmc/taskflow-design.md
-```
+### Project Documentation
+
+- [Main Project README](../README.md)
+- [IDMC Customer Mapping Diagram](../images/idmc-customer-mapping.png)
 
 ---
 
-## Production Design Note
+## 15. Production Design Note
 
 This repository is a simplified portfolio implementation of an enterprise ETL pattern.
 
@@ -748,7 +666,7 @@ The sample values in this repository are used to make the complete ETL flow easy
 
 ---
 
-## Final Mapping Flow
+## 16. Final Mapping Flow
 
 ```text
 Oracle CUSTOMER
@@ -772,7 +690,7 @@ Add RUN_ID
 Add SOURCE_SYSTEM
       |
       v
-Validation
+Data Validation
       |
       v
 Router
