@@ -6,111 +6,187 @@
 
 ## Purpose
 
-Extract new and updated customer records from Oracle and load them into Snowflake staging.
+The mapping extracts new and updated customer records from Oracle, standardizes the incoming data, validates required fields, separates valid and rejected records, and loads the results into Snowflake staging tables.
 
-The mapping also standardizes incoming data, validates required fields, routes rejected records, and assigns a common `RUN_ID` so all records can be traced back to one ETL execution.
+The mapping uses incremental processing so that only customer records changed since the previous successful ETL run are processed.
 
 ---
 
 ## Data Flow
 
-<img width="1536" height="1024" alt="image" src="https://github.com/user-attachments/assets/d1ff8d12-7267-475e-8449-af9404b4c9fa" />
+![Informatica IDMC Customer Mapping](../images/idmc-customer-mapping.png)
+
+The mapping follows this processing flow:
+
+```text
+Oracle CUSTOMER
+      |
+      | Incremental Filter
+      | LAST_UPDATED > LAST_RUN_TIMESTAMP
+      v
+IDMC Source
+      |
+      v
+Expression
+      |
+      | Trim values
+      | Standardize STATE
+      | Standardize STATUS
+      | Add SOURCE_SYSTEM
+      | Add RUN_ID
+      v
+Data Validation
+      |
+      v
+Router
+     / \
+    /   \
+   v     v
+VALID   REJECT
+  |       |
+  v       v
+STG_    STG_CUSTOMER_REJ
+CUSTOMER
+```
 
 ---
 
 # Mapping Walkthrough with Sample Data
 
-Instead of only describing each transformation, the example below shows how customer records change as they move through the IDMC mapping.
+The example below demonstrates how records change as they move through the IDMC mapping.
 
-For this sample run:
+For this sample ETL execution:
 
 ```text
-RUN_ID = 20260829_020000
-
+RUN_ID             = 20260829_020000
 LAST_RUN_TIMESTAMP = 2026-08-15 00:00:00
 ```
-
-The same `RUN_ID` is carried through the mapping and stored with both valid and rejected records.
 
 ---
 
 ## 1. Oracle Source
 
-Oracle `CUSTOMER` contains:
+The source system is Oracle.
 
-| CUSTOMER_ID | FIRST_NAME | LAST_NAME | EMAIL | STATE | STATUS | LAST_UPDATED |
-|---:|---|---|---|---|---|---|
-| 1001 | ` John ` | Smith | john.smith@example.com | il | active | 2026-08-10 |
-| 1002 | ` Maria ` | Garcia | maria.garcia@example.com | in | active | 2026-08-18 |
-| 1003 | David | Brown | david.brown@example.com | oh | inactive | 2026-08-20 |
-| NULL | Robert | Davis | robert.davis@example.com | in | active | 2026-08-21 |
+**Source table:**
 
-The incremental source condition is:
-
-```sql
-WHERE LAST_UPDATED > :LAST_RUN_TIMESTAMP
+```text
+CUSTOMER
 ```
 
-`:LAST_RUN_TIMESTAMP` represents the previous successful ETL execution timestamp supplied at runtime.
+The sample source contains four customer records:
 
-For this sample:
+| CUSTOMER_ID | FIRST_NAME | LAST_NAME | EMAIL | STATE | STATUS | CREATED_DATE | LAST_UPDATED |
+|---:|---|---|---|---|---|---|---|
+| 1001 | John | Smith | john.smith@example.com | il | active | 2025-01-15 | 2026-08-10 |
+| 1002 | Maria | Garcia | maria.garcia@example.com | in | active | 2025-03-22 | 2026-08-18 |
+| 1003 | David | Brown | david.brown@example.com | oh | inactive | 2025-06-10 | 2026-08-20 |
+| NULL | Robert | Davis | robert.davis@example.com | in | active | 2026-02-18 | 2026-08-21 |
+
+**Source records = 4**
+
+---
+
+## 2. Incremental Extraction
+
+The mapping does not process all Oracle records during every ETL execution.
+
+Only records changed after the previous successful ETL run are extracted.
+
+The previous successful timestamp is:
 
 ```text
 LAST_RUN_TIMESTAMP = 2026-08-15 00:00:00
 ```
 
+The incremental condition is:
+
+```sql
+WHERE LAST_UPDATED > :LAST_RUN_TIMESTAMP
+```
+
+The source records are evaluated as follows:
+
+| Customer | LAST_UPDATED | Result | Reason |
+|---|---|---|---|
+| 1001 John | 2026-08-10 | Not Extracted | LAST_UPDATED is before 2026-08-15 |
+| 1002 Maria | 2026-08-18 | Extracted | Changed after previous successful run |
+| 1003 David | 2026-08-20 | Extracted | Changed after previous successful run |
+| NULL Robert | 2026-08-21 | Extracted | Changed after previous successful run |
+
+Customer `1001` is filtered out before entering the IDMC transformation flow.
+
 Therefore:
 
-| Customer | LAST_UPDATED | Result |
-|---|---|---|
-| 1001 John | Aug 10 | Filtered out |
-| 1002 Maria | Aug 18 | Extracted |
-| 1003 David | Aug 20 | Extracted |
-| NULL Robert | Aug 21 | Extracted |
+```text
+Oracle Source
+4 records
+    |
+    | Incremental Filter
+    v
+IDMC Input
+3 records
+```
 
-Customer **1001 is not extracted** because the record was last updated before the previous successful run.
+The IDMC mapping receives:
 
-The mapping therefore receives:
-
-| CUSTOMER_ID | FIRST_NAME | STATE | STATUS | LAST_UPDATED |
-|---:|---|---|---|---|
-| 1002 | ` Maria ` | in | active | 2026-08-18 |
-| 1003 | David | oh | inactive | 2026-08-20 |
-| NULL | Robert | in | active | 2026-08-21 |
+| CUSTOMER_ID | FIRST_NAME | LAST_NAME | STATE | STATUS | LAST_UPDATED |
+|---:|---|---|---|---|---|
+| 1002 | Maria | Garcia | in | active | 2026-08-18 |
+| 1003 | David | Brown | oh | inactive | 2026-08-20 |
+| NULL | Robert | Davis | in | active | 2026-08-21 |
 
 **4 source records → 3 incremental records**
 
 ---
 
-## 2. Expression Transformation
+## 3. Source Transformation
 
-IDMC standardizes incoming values and adds ETL metadata.
+The IDMC Source transformation reads the records returned by the Oracle incremental query.
+
+At this point:
+
+```text
+Input records = 3
+```
+
+The Source transformation passes the extracted Oracle fields into the downstream Expression transformation.
+
+Example fields include:
+
+```text
+CUSTOMER_ID
+FIRST_NAME
+LAST_NAME
+EMAIL
+STATE
+STATUS
+CREATED_DATE
+LAST_UPDATED
+```
+
+---
+
+## 4. Expression Transformation
+
+The Expression transformation standardizes incoming customer data and adds ETL metadata.
 
 Example transformation logic:
 
 ```text
 FIRST_NAME    = TRIM(FIRST_NAME)
-
+LAST_NAME     = TRIM(LAST_NAME)
 STATE         = UPPER(STATE)
-
 STATUS        = UPPER(STATUS)
-
 SOURCE_SYSTEM = 'ORACLE'
-
-RUN_ID        = Taskflow runtime RUN_ID
-```
-
-For this run:
-
-```text
-RUN_ID = 20260829_020000
+RUN_ID        = '20260829_020000'
 ```
 
 ### Before Expression
 
 | CUSTOMER_ID | FIRST_NAME | STATE | STATUS |
 |---:|---|---|---|
-| 1002 | ` Maria ` | in | active |
+| 1002 | Maria | in | active |
 | 1003 | David | oh | inactive |
 | NULL | Robert | in | active |
 
@@ -122,172 +198,601 @@ RUN_ID = 20260829_020000
 | 1003 | David | **OH** | **INACTIVE** | ORACLE | 20260829_020000 |
 | NULL | Robert | **IN** | **ACTIVE** | ORACLE | 20260829_020000 |
 
-### Changes Applied
+The Expression transformation therefore:
 
-- Extra spaces removed from customer names
-- State standardized to uppercase
-- Status standardized to uppercase
-- `SOURCE_SYSTEM` populated
-- `RUN_ID` populated from the taskflow
+- removes unnecessary spaces
+- standardizes state values
+- standardizes status values
+- identifies the source system
+- associates each processed record with the current ETL `RUN_ID`
 
-The `RUN_ID` allows every record to be associated with the ETL execution that processed it.
+The record count remains:
+
+```text
+Input  = 3
+Output = 3
+```
+
+No records should be removed by the Expression transformation.
 
 ---
 
-## 3. Router Transformation
+## 5. Data Validation
 
-The Router separates valid and invalid records.
+The mapping validates required customer information before loading the records into the normal Snowflake staging table.
+
+For this sample mapping, `CUSTOMER_ID` is required.
+
+Validation logic:
+
+```text
+CUSTOMER_ID IS NOT NULL
+```
+
+The three records are evaluated as follows:
+
+| CUSTOMER_ID | FIRST_NAME | Validation |
+|---:|---|---|
+| 1002 | Maria | PASS |
+| 1003 | David | PASS |
+| NULL | Robert | FAIL |
+
+For rejected records, the mapping derives a reject reason.
+
+Example:
+
+```text
+REJECT_REASON = 'Missing CUSTOMER_ID'
+```
+
+At this stage:
+
+```text
+Records evaluated = 3
+
+Valid candidates  = 2
+Invalid candidates = 1
+```
 
 ---
+
+## 6. Router Transformation
+
+The Router separates valid records from rejected records.
 
 ### VALID_RECORDS
 
-Condition:
+Router condition:
 
 ```text
 NOT ISNULL(CUSTOMER_ID)
 ```
 
-Records:
+Records routed to `VALID_RECORDS`:
 
-| CUSTOMER_ID | FIRST_NAME | STATE | STATUS | RUN_ID |
-|---:|---|---|---|---|
-| 1002 | Maria | IN | ACTIVE | 20260829_020000 |
-| 1003 | David | OH | INACTIVE | 20260829_020000 |
+| CUSTOMER_ID | FIRST_NAME | STATE | STATUS |
+|---:|---|---|---|
+| 1002 | Maria | IN | ACTIVE |
+| 1003 | David | OH | INACTIVE |
 
-These records continue to the normal Snowflake staging target:
-
-`STG_CUSTOMER`
-
-Both records preserve:
+These records continue to:
 
 ```text
-RUN_ID = 20260829_020000
+STG_CUSTOMER
 ```
-
----
 
 ### REJECT_RECORDS
 
-Condition:
+Router condition:
 
 ```text
 ISNULL(CUSTOMER_ID)
 ```
 
-Rejected record:
+Record routed to `REJECT_RECORDS`:
 
-| CUSTOMER_ID | FIRST_NAME | STATE | STATUS | REJECT_REASON | RUN_ID |
-|---:|---|---|---|---|---|
-| NULL | Robert | IN | ACTIVE | Missing CUSTOMER_ID | 20260829_020000 |
+| CUSTOMER_ID | FIRST_NAME | STATE | STATUS | REJECT_REASON |
+|---:|---|---|---|---|
+| NULL | Robert | IN | ACTIVE | Missing CUSTOMER_ID |
 
-This record does **not** continue to the normal staging target.
-
-It is routed to:
-
-`STG_CUSTOMER_REJ`
-
-for investigation, correction, and possible reprocessing.
-
-The rejected record preserves the same:
+This record continues to:
 
 ```text
-RUN_ID = 20260829_020000
+STG_CUSTOMER_REJ
 ```
 
-This makes it possible to reconcile valid and rejected records from the same ETL execution.
-
----
-
-## 4. Snowflake Target — STG_CUSTOMER
-
-The two valid records are loaded into Snowflake staging.
-
-Example target result:
-
-| CUSTOMER_ID | FIRST_NAME | STATE | STATUS | SOURCE_SYSTEM | RUN_ID | LOAD_TIMESTAMP |
-|---:|---|---|---|---|---|---|
-| 1002 | Maria | IN | ACTIVE | ORACLE | 20260829_020000 | 2026-08-29 02:05 |
-| 1003 | David | OH | INACTIVE | ORACLE | 20260829_020000 | 2026-08-29 02:05 |
-
-The staging table contains the transformed customer records plus ETL metadata.
-
----
-
-## 5. Snowflake Reject Target — STG_CUSTOMER_REJ
-
-The rejected record is stored separately:
-
-| CUSTOMER_ID | FIRST_NAME | STATE | STATUS | REJECT_REASON | SOURCE_SYSTEM | RUN_ID |
-|---:|---|---|---|---|---|---|
-| NULL | Robert | IN | ACTIVE | Missing CUSTOMER_ID | ORACLE | 20260829_020000 |
-
-The reject table preserves the source data so the record can be investigated and reprocessed.
-
----
-
-# End-to-End Mapping Result
+The Router result is:
 
 ```text
-Oracle CUSTOMER
-      │
-      │ 4 source records
-      ▼
-Incremental Extract
-      │
-      │ LAST_UPDATED > LAST_RUN_TIMESTAMP
-      │
-      │ 3 changed records
-      ▼
-Expression
-      │
-      │ Standardize data
-      │ Add SOURCE_SYSTEM
-      │ Add RUN_ID
-      ▼
-Router
-     / \
-    /   \
-   ▼     ▼
-VALID   REJECT
-  2       1
-  │       │
-  ▼       ▼
-STG_     STG_
-CUSTOMER CUSTOMER_REJ
-  │       │
-  └───┬───┘
-      │
-      ▼
-RUN_ID = 20260829_020000
-      │
-      ▼
-Reconciliation
-```
-
----
-
-# Mapping Result
-
-| ETL Step | Record Count |
-|---|---:|
-| Oracle source | 4 |
-| Filtered out by incremental logic | 1 |
-| Incrementally extracted | 3 |
-| Valid | 2 |
-| Rejected | 1 |
-| Loaded to STG_CUSTOMER | 2 |
-| Loaded to STG_CUSTOMER_REJ | 1 |
-
-Reconciliation:
-
-```text
-3 extracted = 2 loaded + 1 rejected
+             IDMC INPUT
+              3 records
+                  |
+           +------+------+
+           |             |
+           v             v
+         VALID         REJECT
+           2             1
+           |             |
+           v             v
+    STG_CUSTOMER   STG_CUSTOMER_REJ
 ```
 
 Therefore:
 
 ```text
+3 input records = 2 valid + 1 rejected
+```
+
+---
+
+## 7. Snowflake Valid Target
+
+**Target system:** Snowflake
+
+**Target table:**
+
+```text
+STG_CUSTOMER
+```
+
+The staging table contains records that successfully passed validation.
+
+Expected output:
+
+| CUSTOMER_ID | FIRST_NAME | LAST_NAME | EMAIL | STATE | STATUS | CREATED_DATE | LAST_UPDATED | RUN_ID | SOURCE_SYSTEM |
+|---:|---|---|---|---|---|---|---|---|---|
+| 1002 | Maria | Garcia | maria.garcia@example.com | IN | ACTIVE | 2025-03-22 | 2026-08-18 | 20260829_020000 | ORACLE |
+| 1003 | David | Brown | david.brown@example.com | OH | INACTIVE | 2025-06-10 | 2026-08-20 | 20260829_020000 | ORACLE |
+
+**Loaded records = 2**
+
+The staging data is later used for dimensional processing, including SCD Type 2 processing into `DIM_CUSTOMER`.
+
+---
+
+## 8. Snowflake Reject Target
+
+Rejected records are preserved instead of being silently discarded.
+
+**Reject table:**
+
+```text
+STG_CUSTOMER_REJ
+```
+
+Expected rejected record:
+
+| CUSTOMER_ID | FIRST_NAME | LAST_NAME | EMAIL | STATE | STATUS | CREATED_DATE | LAST_UPDATED | REJECT_REASON | RUN_ID | SOURCE_SYSTEM |
+|---:|---|---|---|---|---|---|---|---|---|---|
+| NULL | Robert | Davis | robert.davis@example.com | IN | ACTIVE | 2026-02-18 | 2026-08-21 | Missing CUSTOMER_ID | 20260829_020000 | ORACLE |
+
+**Rejected records = 1**
+
+Keeping the complete rejected source record makes it possible to:
+
+- identify the failed record
+- understand why it failed
+- investigate the source data
+- correct the problem
+- reprocess the record if necessary
+
+---
+
+## 9. Why Four Source Records Become Three Output Records
+
+The source file contains four records, but only three records satisfy the incremental condition.
+
+```text
+LAST_RUN_TIMESTAMP = 2026-08-15 00:00:00
+```
+
+The condition is:
+
+```sql
+LAST_UPDATED > :LAST_RUN_TIMESTAMP
+```
+
+Therefore:
+
+```text
+1001 John
+LAST_UPDATED = 2026-08-10
+2026-08-10 < 2026-08-15
+→ NOT EXTRACTED
+
+
+1002 Maria
+LAST_UPDATED = 2026-08-18
+2026-08-18 > 2026-08-15
+→ EXTRACTED → VALID
+
+
+1003 David
+LAST_UPDATED = 2026-08-20
+2026-08-20 > 2026-08-15
+→ EXTRACTED → VALID
+
+
+NULL Robert
+LAST_UPDATED = 2026-08-21
+2026-08-21 > 2026-08-15
+→ EXTRACTED → REJECT
+```
+
+The complete count flow is therefore:
+
+```text
+SOURCE FILE
+4 records
+    |
+    | Incremental condition
+    | LAST_UPDATED > LAST_RUN_TIMESTAMP
+    |
+    +---- 1001 John filtered out
+    |
+    v
+EXTRACTED
+3 records
+    |
+    v
+IDMC
+    |
+ +--+--+
+ |     |
+ v     v
+VALID REJECT
+  2     1
+ |       |
+ v       v
+STG_    STG_CUSTOMER_REJ
+CUSTOMER
+```
+
+This is why:
+
+```text
+Source file records = 4
+
+Incrementally extracted = 3
+
+Loaded   = 2
+Rejected = 1
+```
+
+The source-to-target reconciliation is based on the **three records extracted for the ETL run**, not all four records present in the source table.
+
+---
+
+## 10. RUN_ID Tracking
+
+The sample ETL execution uses:
+
+```text
+RUN_ID = 20260829_020000
+```
+
+`RUN_ID` is carried into both staging paths:
+
+```text
+                    RUN_ID
+              20260829_020000
+                     |
+                 IDMC INPUT
+                     |
+              +------+------+
+              |             |
+              v             v
+            VALID         REJECT
+              |             |
+              v             v
+       STG_CUSTOMER   STG_CUSTOMER_REJ
+              |             |
+              +------+------+
+                     |
+              RUN_ID retained
+```
+
+This allows records to be associated with one specific ETL execution.
+
+For example:
+
+```sql
+SELECT *
+FROM STG_CUSTOMER
+WHERE RUN_ID = '20260829_020000';
+```
+
+and:
+
+```sql
+SELECT *
+FROM STG_CUSTOMER_REJ
+WHERE RUN_ID = '20260829_020000';
+```
+
+This is useful for:
+
+- reconciliation
+- troubleshooting
+- production monitoring
+- root-cause analysis
+- restart/reprocessing
+- identifying records associated with a failed run
+
+---
+
+## 11. Reconciliation
+
+After the mapping completes, all incrementally extracted records must be accounted for.
+
+For this sample run:
+
+```text
+RUN_ID      = 20260829_020000
+
+SOURCE      = 3
+LOADED      = 2
+REJECTED    = 1
+
+DIFFERENCE  = 0
+STATUS      = PASS
+```
+
+The reconciliation rule is:
+
+```text
+SOURCE = LOADED + REJECTED
+```
+
+Therefore:
+
+```text
+3 = 2 + 1
+```
+
+Difference:
+
+```text
+DIFFERENCE = SOURCE - (LOADED + REJECTED)
+
+DIFFERENCE = 3 - (2 + 1)
+
+DIFFERENCE = 0
+```
+
+Result:
+
+```text
+STATUS = PASS
+```
+
+Notice that `SOURCE = 3` represents the number of records returned by the **incremental extraction**, not the four total records stored in the Oracle source.
+
+---
+
+## 12. Mapping Result Summary
+
+| Processing Step | Record Count |
+|---|---:|
+| Oracle source records | 4 |
+| Filtered out by incremental logic | 1 |
+| Incrementally extracted | 3 |
+| Expression output | 3 |
+| Valid records | 2 |
+| Rejected records | 1 |
+| Loaded to STG_CUSTOMER | 2 |
+| Loaded to STG_CUSTOMER_REJ | 1 |
+| Reconciliation difference | 0 |
+| Reconciliation status | PASS |
+
+The complete processing result is:
+
+```text
+4 source records
+       |
+       | 1 filtered out
+       v
+3 incremental records
+       |
+       v
+IDMC Mapping
+      / \
+     /   \
+    v     v
+ VALID   REJECT
+   2       1
+   |       |
+   v       v
+ STG     STG_REJ
+
+2 + 1 = 3
+
+PASS
+```
+
+---
+
+## 13. Mapping Responsibilities
+
+The mapping demonstrates the following ETL responsibilities:
+
+- reading Oracle source data
+- incremental extraction using `LAST_UPDATED`
+- passing only changed records into IDMC
+- standardizing incoming values
+- validating required fields
+- routing valid and rejected records
+- preserving rejected source data
+- loading valid records into Snowflake staging
+- loading invalid records into a Snowflake reject table
+- assigning a `RUN_ID` to processed records
+- supporting downstream reconciliation
+- supporting troubleshooting and root-cause analysis
+
+---
+
+## 14. Related Repository Files
+
+### Oracle
+
+Source table definition:
+
+```text
+oracle/create_customer.sql
+```
+
+Incremental extraction:
+
+```text
+oracle/incremental_extract.sql
+```
+
+### Snowflake
+
+Valid staging table:
+
+```text
+snowflake/create_stage_tables.sql
+```
+
+Reject table:
+
+```text
+snowflake/create_reject_table.sql
+```
+
+Customer dimension:
+
+```text
+snowflake/create_dimension.sql
+```
+
+SCD Type 2 processing:
+
+```text
+snowflake/merge_customer.sql
+```
+
+ETL run-control table:
+
+```text
+snowflake/create_etl_run_control.sql
+```
+
+ETL run-control processing:
+
+```text
+snowflake/update_etl_run_control.sql
+```
+
+### Validation
+
+Data-quality checks:
+
+```text
+validation/data_quality_checks.sql
+```
+
+Reconciliation:
+
+```text
+validation/reconciliation.sql
+```
+
+### Sample Data
+
+Oracle source data:
+
+```text
+sample-data/source/customer.csv
+```
+
+Expected valid output:
+
+```text
+sample-data/expected/stg_customer.csv
+```
+
+Expected reject output:
+
+```text
+sample-data/expected/stg_customer_rej.csv
+```
+
+### IDMC
+
+Taskflow design:
+
+```text
+idmc/taskflow-design.md
+```
+
+---
+
+## Production Design Note
+
+This repository is a simplified portfolio implementation of an enterprise ETL pattern.
+
+In a production environment, runtime values such as:
+
+```text
+RUN_ID
+LAST_RUN_TIMESTAMP
+```
+
+would normally be supplied or derived dynamically by the orchestration process rather than hard-coded into the mapping.
+
+The taskflow would control the execution sequence, record run status, execute reconciliation, handle failures, and advance the successful-run timestamp only after successful processing.
+
+The sample values in this repository are used to make the complete ETL flow easy to follow and test.
+
+---
+
+## Final Mapping Flow
+
+```text
+Oracle CUSTOMER
+4 records
+      |
+      | LAST_UPDATED > 2026-08-15
+      |
+      +---- 1001 John
+      |     Filtered Out
+      |
+      v
+3 Incremental Records
+      |
+      v
+IDMC Source
+      |
+      v
+Expression
+Standardize Data
+Add RUN_ID
+Add SOURCE_SYSTEM
+      |
+      v
+Validation
+      |
+      v
+Router
+     / \
+    /   \
+   v     v
+VALID   REJECT
+  2       1
+  |       |
+  v       v
+STG_CUSTOMER     STG_CUSTOMER_REJ
+  |                    |
+  +----------+---------+
+             |
+             v
+       Reconciliation
+
+SOURCE     = 3
+LOADED     = 2
+REJECTED   = 1
 DIFFERENCE = 0
 
 STATUS = PASS
@@ -295,57 +800,8 @@ STATUS = PASS
 
 ---
 
-# RUN_ID Tracking
+## About the Example
 
-For this sample execution:
+All customer records, timestamps, `RUN_ID` values, table names, and processing examples in this mapping design are synthetic and created specifically for portfolio demonstration purposes.
 
-```text
-RUN_ID = 20260829_020000
-```
-
-The same `RUN_ID` is stored in:
-
-- `STG_CUSTOMER`
-- `STG_CUSTOMER_REJ`
-- `ETL_RUN_CONTROL`
-
-This allows reconciliation to evaluate one ETL execution independently from previous or future runs.
-
-Example:
-
-```text
-RUN_ID             SOURCE   LOADED   REJECTED   DIFFERENCE   STATUS
------------------  ------   ------   --------   ----------   ------
-20260829_020000       3        2         1           0        PASS
-```
-
----
-
-# Why RUN_ID Matters
-
-Without `RUN_ID`, a query such as:
-
-```sql
-SELECT COUNT(*)
-FROM STG_CUSTOMER;
-```
-
-could count records from many historical ETL executions.
-
-With `RUN_ID`:
-
-```sql
-SELECT COUNT(*)
-FROM STG_CUSTOMER
-WHERE RUN_ID = '20260829_020000';
-```
-
-The reconciliation checks only record items belonging to the current ETL run.
-
-This improves:
-
-- ETL monitoring
-- Source-to-target reconciliation
-- Production troubleshooting
-- Root-cause analysis
-- Restart and reprocessing
+No proprietary production code, credentials, company data, or customer information is included.
