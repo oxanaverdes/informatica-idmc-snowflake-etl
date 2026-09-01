@@ -3,16 +3,15 @@
 -- ============================================================
 --
 -- Purpose:
---   Validate that every customer record extracted during one
---   specific ETL run is accounted for as either successfully
---   loaded or rejected.
+--   Reconcile one ETL execution using RUN_ID and validate that
+--   every extracted source record is accounted for as either
+--   successfully loaded or rejected.
 --
+-- Sample RUN_ID:
 --
--- ============================================================
--- SAMPLE ETL RUN
--- ============================================================
+--   20260829_020000
 --
--- RUN_ID      = 20260829_020000
+-- Expected result:
 --
 -- SOURCE      = 3
 -- LOADED      = 2
@@ -20,105 +19,12 @@
 -- DIFFERENCE  = 0
 -- STATUS      = PASS
 --
---
--- ============================================================
--- RECORDS PROCESSED
--- ============================================================
---
--- CUSTOMER        RESULT
--- --------------  --------
--- 1002 Maria      Valid
--- 1003 David      Valid
--- NULL Robert     Rejected
---
---
--- ============================================================
--- WHAT ARE WE VALIDATING?
--- ============================================================
---
--- The Oracle incremental extract returned 3 records:
---
---   1002 Maria  -> Valid
---   1003 David  -> Valid
---   NULL Robert -> Rejected because CUSTOMER_ID is missing
---
--- IDMC routes the records as follows:
---
---                     IDMC INPUT
---                      3 records
---                         |
---                  +------+------+
---                  |             |
---                  v             v
---                VALID         REJECT
---                  2             1
---                  |             |
---                  v             v
---          STG_CUSTOMER    STG_CUSTOMER_REJ
---
--- Both targets store the same RUN_ID so the records can be
--- reconciled for one specific ETL execution.
---
---
--- ============================================================
--- RECONCILIATION RULE
--- ============================================================
---
--- Every extracted record must be accounted for:
---
---   SOURCE = LOADED + REJECTED
---
--- For this run:
---
---   3 = 2 + 1
---
--- Difference calculation:
---
---   DIFFERENCE = SOURCE - (LOADED + REJECTED)
---
---   DIFFERENCE = 3 - (2 + 1)
---              = 0
---
--- Therefore:
---
---   STATUS = PASS
---
---
--- If DIFFERENCE = 0:
---     Reconciliation PASSES.
---
--- If DIFFERENCE <> 0:
---     Reconciliation FAILS and the missing or additional
---     records must be investigated.
---
---
--- ============================================================
--- RUN IDENTIFIER
--- ============================================================
---
--- Sample RUN_ID:
---
---   20260829_020000
---
--- STG_CUSTOMER and STG_CUSTOMER_REJ both contain RUN_ID.
---
--- This allows reconciliation to count only records belonging
--- to the current ETL run instead of counting historical data
--- from previous executions.
---
 -- ============================================================
 
 
 -- ============================================================
--- 1. COUNT SUCCESSFULLY LOADED RECORDS FOR THIS RUN
+-- 1. LOADED RECORDS FOR THE RUN
 -- ============================================================
---
--- Expected sample result:
---
--- RUN_ID             LOADED_RECORDS
--- -----------------  --------------
--- 20260829_020000          2
---
 
 SELECT
     RUN_ID,
@@ -129,15 +35,8 @@ GROUP BY RUN_ID;
 
 
 -- ============================================================
--- 2. COUNT REJECTED RECORDS FOR THIS RUN
+-- 2. REJECTED RECORDS FOR THE RUN
 -- ============================================================
---
--- Expected sample result:
---
--- RUN_ID             REJECTED_RECORDS
--- -----------------  ----------------
--- 20260829_020000           1
---
 
 SELECT
     RUN_ID,
@@ -148,99 +47,175 @@ GROUP BY RUN_ID;
 
 
 -- ============================================================
--- 3. PROCESSING SUMMARY FOR THIS RUN
+-- 3. RECONCILIATION
 -- ============================================================
 --
--- Expected sample result:
+-- SOURCE_COUNT comes from ETL_RUN_CONTROL.
 --
--- RUN_ID             LOADED   REJECTED   TOTAL_PROCESSED
--- -----------------  ------   --------   ---------------
--- 20260829_020000       2         1             3
+-- Loaded and rejected counts come from the staging tables
+-- using the same RUN_ID.
 --
+-- Reconciliation Rule:
+--
+--   SOURCE_COUNT = LOADED_COUNT + REJECTED_COUNT
+--
+-- Difference:
+--
+--   SOURCE_COUNT - (LOADED_COUNT + REJECTED_COUNT)
+--
+-- If DIFFERENCE = 0 -> PASS
+-- Otherwise          -> FAIL
+--
+-- ============================================================
+
+WITH RUN_DATA AS (
+
+    SELECT
+        ctl.RUN_ID,
+        ctl.SOURCE_COUNT,
+
+        (
+            SELECT COUNT(*)
+            FROM STG_CUSTOMER stg
+            WHERE stg.RUN_ID = ctl.RUN_ID
+        ) AS LOADED_COUNT,
+
+        (
+            SELECT COUNT(*)
+            FROM STG_CUSTOMER_REJ rej
+            WHERE rej.RUN_ID = ctl.RUN_ID
+        ) AS REJECTED_COUNT
+
+    FROM ETL_RUN_CONTROL ctl
+
+    WHERE ctl.RUN_ID = '20260829_020000'
+)
 
 SELECT
-    '20260829_020000' AS RUN_ID,
+    RUN_ID,
+    SOURCE_COUNT,
+    LOADED_COUNT,
+    REJECTED_COUNT,
 
-    (SELECT COUNT(*)
-       FROM STG_CUSTOMER
-      WHERE RUN_ID = '20260829_020000') AS LOADED_RECORDS,
+    SOURCE_COUNT
+        - (LOADED_COUNT + REJECTED_COUNT)
+        AS DIFFERENCE,
 
-    (SELECT COUNT(*)
-       FROM STG_CUSTOMER_REJ
-      WHERE RUN_ID = '20260829_020000') AS REJECTED_RECORDS,
+    CASE
+        WHEN SOURCE_COUNT
+             - (LOADED_COUNT + REJECTED_COUNT) = 0
+        THEN 'PASS'
+        ELSE 'FAIL'
+    END AS STATUS
 
-    (SELECT COUNT(*)
-       FROM STG_CUSTOMER
-      WHERE RUN_ID = '20260829_020000')
-    +
-    (SELECT COUNT(*)
-       FROM STG_CUSTOMER_REJ
-      WHERE RUN_ID = '20260829_020000') AS TOTAL_PROCESSED;
+FROM RUN_DATA;
 
 
 -- ============================================================
--- 4. RECONCILIATION RESULT
+-- EXPECTED SAMPLE RESULT
 -- ============================================================
---
--- SOURCE_RECORDS is set to 3 for this documented sample run.
---
--- In a full production implementation, SOURCE_RECORDS would
--- normally come from an ETL audit/control table populated by
--- the source extraction step.
---
--- Expected result:
 --
 -- RUN_ID             SOURCE   LOADED   REJECTED   DIFFERENCE   STATUS
 -- -----------------  ------   ------   --------   ----------   ------
 -- 20260829_020000       3        2         1           0        PASS
 --
+--
+-- Records represented by this run:
+--
+-- CUSTOMER        RESULT
+-- --------------  --------
+-- 1002 Maria      Loaded
+-- 1003 David      Loaded
+-- NULL Robert     Rejected
+--
+--
+-- Data Flow:
+--
+--                SOURCE COUNT
+--                     3
+--                     |
+--              +------+------+
+--              |             |
+--              v             v
+--           LOADED         REJECTED
+--              2              1
+--              |              |
+--              +------+-------+
+--                     |
+--                     v
+--                  2 + 1
+--                     |
+--                     v
+--                     3
+--                     |
+--                     v
+--              DIFFERENCE = 0
+--                     |
+--                     v
+--                   PASS
+--
+-- ============================================================
 
-WITH RUN_COUNTS AS (
-    SELECT
-        '20260829_020000' AS RUN_ID,
-        3 AS SOURCE_RECORDS,
 
-        (SELECT COUNT(*)
-           FROM STG_CUSTOMER
-          WHERE RUN_ID = '20260829_020000') AS LOADED_RECORDS,
-
-        (SELECT COUNT(*)
-           FROM STG_CUSTOMER_REJ
-          WHERE RUN_ID = '20260829_020000') AS REJECTED_RECORDS
-)
+-- ============================================================
+-- 4. COMPARE STORED CONTROL VALUES TO ACTUAL COUNTS
+-- ============================================================
+--
+-- This check compares the counts stored in ETL_RUN_CONTROL
+-- against the actual rows found in the staging tables.
+--
+-- Expected:
+--
+-- STORED_LOADED   = ACTUAL_LOADED
+-- STORED_REJECTED = ACTUAL_REJECTED
+--
+-- ============================================================
 
 SELECT
-    RUN_ID,
-    SOURCE_RECORDS,
-    LOADED_RECORDS,
-    REJECTED_RECORDS,
+    ctl.RUN_ID,
 
-    SOURCE_RECORDS
-      - (LOADED_RECORDS + REJECTED_RECORDS)
-        AS DIFFERENCE,
+    ctl.SOURCE_COUNT,
 
-    CASE
-        WHEN SOURCE_RECORDS
-             - (LOADED_RECORDS + REJECTED_RECORDS) = 0
-        THEN 'PASS'
-        ELSE 'FAIL'
-    END AS STATUS
+    ctl.LOADED_COUNT AS STORED_LOADED_COUNT,
 
-FROM RUN_COUNTS;
+    (
+        SELECT COUNT(*)
+        FROM STG_CUSTOMER stg
+        WHERE stg.RUN_ID = ctl.RUN_ID
+    ) AS ACTUAL_LOADED_COUNT,
+
+    ctl.REJECTED_COUNT AS STORED_REJECTED_COUNT,
+
+    (
+        SELECT COUNT(*)
+        FROM STG_CUSTOMER_REJ rej
+        WHERE rej.RUN_ID = ctl.RUN_ID
+    ) AS ACTUAL_REJECTED_COUNT,
+
+    ctl.DIFFERENCE_COUNT,
+
+    ctl.STATUS
+
+FROM ETL_RUN_CONTROL ctl
+
+WHERE ctl.RUN_ID = '20260829_020000';
 
 
 -- ============================================================
--- EXPECTED RECONCILIATION
+-- EXPECTED CONTROL VALIDATION
 -- ============================================================
 --
--- RUN_ID                 = 20260829_020000
--- SOURCE RECORDS         = 3
--- LOADED RECORDS         = 2
--- REJECTED RECORDS       = 1
+-- RUN_ID              = 20260829_020000
 --
--- 2 + 1 = 3
+-- SOURCE_COUNT        = 3
 --
--- DIFFERENCE             = 0
--- RECONCILIATION STATUS  = PASS
+-- STORED_LOADED       = 2
+-- ACTUAL_LOADED       = 2
+--
+-- STORED_REJECTED     = 1
+-- ACTUAL_REJECTED     = 1
+--
+-- DIFFERENCE_COUNT    = 0
+-- STATUS              = PASS
 --
 -- ============================================================
