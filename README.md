@@ -47,6 +47,71 @@ PASS / FAIL
 
 ---
 
+## IDMC Mapping
+
+The IDMC mapping performs incremental extraction, data standardization, validation, and routing of valid and rejected customer records.
+
+![Informatica IDMC Customer Mapping](images/idmc-customer-mapping.png)
+
+The mapping demonstrates the complete processing flow:
+
+```text
+Oracle CUSTOMER
+      |
+      | Incremental Filter
+      | LAST_UPDATED > LAST_RUN_TIMESTAMP
+      v
+IDMC Source
+      |
+      v
+Expression
+      |
+      | Standardize values
+      | Add ETL metadata
+      v
+Data Validation
+      |
+      v
+Router
+     / \
+    /   \
+   v     v
+VALID   REJECT
+  |       |
+  v       v
+STG_    STG_CUSTOMER_REJ
+CUSTOMER
+```
+
+For the sample run:
+
+```text
+Oracle Source Records = 4
+        |
+        v
+Incremental Filter
+        |
+        | 1001 John filtered out
+        v
+Extracted Records = 3
+        |
+        v
+IDMC Mapping
+       / \
+      /   \
+     v     v
+ VALID   REJECT
+   2       1
+```
+
+Therefore:
+
+```text
+3 extracted = 2 loaded + 1 rejected
+```
+
+---
+
 ## Technologies
 
 | Area | Technology |
@@ -125,9 +190,9 @@ Incoming values are standardized before validation.
 Example:
 
 ```text
-FIRST_NAME = TRIM(FIRST_NAME)
-STATE      = UPPER(STATE)
-STATUS     = UPPER(STATUS)
+FIRST_NAME    = TRIM(FIRST_NAME)
+STATE         = UPPER(STATE)
+STATUS        = UPPER(STATUS)
 SOURCE_SYSTEM = 'ORACLE'
 ```
 
@@ -457,6 +522,9 @@ PASS
 
 ```text
 informatica-idmc-snowflake-etl/
+│
+├── images/
+│   └── idmc-customer-mapping.png
 │
 ├── oracle/
 │   ├── create_customer.sql
